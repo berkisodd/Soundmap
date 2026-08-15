@@ -178,7 +178,20 @@
   .popup-play{
     display:flex;align-items:center;gap:8px;background:var(--amber);color:#0A0B0D;
     border:none;border-radius:8px;padding:8px 12px;font-weight:600;font-size:13px;cursor:pointer;width:100%;
-    justify-content:center;
+    justify-content:center;transition:background .2s ease,transform .15s ease;
+  }
+  .popup-play:active{transform:scale(.97);}
+  .popup-play.playing{background:var(--teal);}
+  .popup-play .play-icon{font-size:11px;line-height:1;}
+  .popup-play.playing .play-icon{display:none;}
+  .popup-play .eq{display:none;align-items:flex-end;gap:3px;height:13px;}
+  .popup-play.playing .eq{display:flex;}
+  .popup-play .eq span{width:3px;border-radius:1px;background:#0A0B0D;display:block;height:4px;animation:eqbounce .9s ease-in-out infinite;}
+  .popup-play .eq span:nth-child(2){animation-delay:.2s;}
+  .popup-play .eq span:nth-child(3){animation-delay:.4s;}
+  @keyframes eqbounce{
+    0%,100%{height:4px;}
+    50%{height:13px;}
   }
   .leaflet-popup-close-button{color:var(--text-dim)!important;}
 
@@ -289,6 +302,7 @@
   var audioCtx = null, analyser = null, sourceNode = null, animFrame = null;
   var activePopupAudio = null;
   var activePin = null;
+  var activePlayBtn = null;
   var MAX_SECONDS = 15;
 
   // ---------- map setup ----------
@@ -622,13 +636,18 @@
       (pin.title ? '<div class="popup-title">' + escapeHtml(pin.title) + '</div>' : '') +
       '<div class="popup-time">' + formatTime(pin.time) + ' &middot; ' + pin.duration + 's</div>' +
       (pin.description ? '<div class="popup-desc">' + escapeHtml(pin.description) + '</div>' : '') +
-      '<button class="popup-play" id="play-'+pin.id+'">&#9654; Play</button>';
+      '<button class="popup-play" id="play-'+pin.id+'">' +
+        '<span class="play-icon">&#9654;</span>' +
+        '<span class="eq"><span></span><span></span><span></span></span>' +
+        '<span class="play-label">Play</span>' +
+      '</button>';
     marker.bindPopup(popupHtml);
 
     marker.on('popupopen', function(){
       var btn = document.getElementById('play-'+pin.id);
       if (!btn) return;
-      btn.onclick = function(){ playPin(pin); };
+      if (activePin === pin.id) { setBtnPlaying(btn, true); activePlayBtn = btn; }
+      btn.onclick = function(){ playPin(pin, btn); };
     });
   }
 
@@ -639,19 +658,41 @@
     return h + ':' + (m<10?'0':'') + m + ' ' + ampm;
   }
 
-  function playPin(pin){
-    if (activePopupAudio){ activePopupAudio.pause(); }
-    if (activePin){ document.getElementById('mark-'+activePin).classList.remove('playing'); }
+  function setBtnPlaying(btn, isPlaying){
+    if (!btn) return;
+    btn.classList.toggle('playing', isPlaying);
+    var label = btn.querySelector('.play-label');
+    if (label) label.textContent = isPlaying ? 'Playing' : 'Play';
+  }
+
+  function playPin(pin, btn){
+    var wasSamePin = activePin === pin.id;
+
+    if (activePopupAudio){
+      activePopupAudio.pause();
+      setBtnPlaying(activePlayBtn, false);
+      var prevMark = document.getElementById('mark-'+activePin);
+      if (prevMark) prevMark.classList.remove('playing');
+      activePopupAudio = null;
+      activePin = null;
+      activePlayBtn = null;
+    }
+    if (wasSamePin) return; // tapping the playing pin's button again just stops it
 
     var a = new Audio(pin.url);
     activePopupAudio = a;
     activePin = pin.id;
+    activePlayBtn = btn;
     var el = document.getElementById('mark-'+pin.id);
     if (el) el.classList.add('playing');
+    setBtnPlaying(btn, true);
     a.play();
     a.onended = function(){
       if (el) el.classList.remove('playing');
+      setBtnPlaying(btn, false);
       activePin = null;
+      activePopupAudio = null;
+      activePlayBtn = null;
     };
   }
 
