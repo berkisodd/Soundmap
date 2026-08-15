@@ -133,6 +133,7 @@
   .btn.primary{background:var(--amber);color:#0A0B0D;border-color:var(--amber);}
   .btn:active{transform:scale(.97);}
   .btn.hidden{display:none;}
+  .btn:disabled{opacity:.55;cursor:default;}
 
   audio.preview{width:100%;margin-top:2px;}
 
@@ -229,10 +230,36 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function(){
+  // ---------- supabase ----------
+  // Fill these in from Settings > API in your Supabase project, then run the
+  // SQL below (SQL Editor) once to create the table, bucket, and public RLS
+  // policies this page relies on.
+  //
+  //   create table public.pins (
+  //     id uuid primary key default gen_random_uuid(),
+  //     lat double precision not null,
+  //     lng double precision not null,
+  //     audio_path text not null,
+  //     duration integer not null,
+  //     created_at timestamptz not null default now()
+  //   );
+  //   alter table public.pins enable row level security;
+  //   create policy "public read" on public.pins for select using (true);
+  //   create policy "public insert" on public.pins for insert with check (true);
+  //
+  //   insert into storage.buckets (id, name, public) values ('sounds','sounds', true);
+  //   create policy "public read sounds" on storage.objects for select using (bucket_id = 'sounds');
+  //   create policy "public upload sounds" on storage.objects for insert with check (bucket_id = 'sounds');
+  var SUPABASE_URL = 'https://YOUR-PROJECT-REF.supabase.co';
+  var SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';
+  var SOUNDS_BUCKET = 'sounds';
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
   // ---------- state ----------
-  var pins = []; // {id, lat, lng, url, blob, duration, time}
+  var pins = []; // {id, lat, lng, url, audioPath, duration, time} — hydrated from Supabase
   var pendingLatLng = null;
   var mediaRecorder = null;
   var recordedChunks = [];
@@ -464,26 +491,84 @@
   }
 
   // ---------- committing a pin ----------
-  function commitPin(blob, duration){
-    var pin = {
-      id: 'p' + Date.now(),
-      lat: pendingLatLng.lat,
-      lng: pendingLatLng.lng,
-      url: currentBlobUrl,
-      blob: blob,
-      duration: duration,
-      time: new Date()
+  function extFromMime(type){
+    if (!type) return 'webm';
+    if (type.indexOf('webm') > -1) return 'webm';
+    if (type.indexOf('mp4') > -1) return 'm4a';
+    if (type.indexOf('ogg') > -1) return 'ogg';
+    return 'webm';
+  }
+
+  function rowToPin(row){
+    return {
+      id: row.id,
+      lat: row.lat,
+      lng: row.lng,
+      audioPath: row.audio_path,
+      url: sb.storage.from(SOUNDS_BUCKET).getPublicUrl(row.audio_path).data.publicUrl,
+      duration: row.duration,
+      time: new Date(row.created_at)
     };
-    pins.push(pin);
-    addPinToMap(pin);
-    updatePinCount();
-    closeSheet();
-    showToast('Sound dropped');
+  }
+
+  function commitPin(blob, duration){
+    var latlng = pendingLatLng;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+
+    var path = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : 'p' + Date.now() + Math.random().toString(16).slice(2)) + '.' + extFromMime(blob.type);
+
+    sb.storage.from(SOUNDS_BUCKET).upload(path, blob, { contentType: blob.type || 'audio/webm' })
+      .then(function(res){
+        if (res.error) throw res.error;
+        return sb.from('pins').insert({
+          lat: latlng.lat,
+          lng: latlng.lng,
+          audio_path: path,
+          duration: duration
+        }).select().single();
+      })
+      .then(function(res){
+        if (res.error) throw res.error;
+        var pin = rowToPin(res.data);
+        pins.push(pin);
+        addPinToMap(pin);
+        updatePinCount();
+        closeSheet();
+        showToast('Sound dropped');
+      })
+      .catch(function(err){
+        console.error(err);
+        showToast('Couldn\'t save — try again');
+      })
+      .finally(function(){
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Drop pin';
+      });
   }
 
   function updatePinCount(){
     pinCountEl.textContent = pins.length + (pins.length === 1 ? ' sound pinned' : ' sounds pinned');
   }
+
+  // ---------- loading existing pins ----------
+  function loadPins(){
+    sb.from('pins').select('*').order('created_at', { ascending: true })
+      .then(function(res){
+        if (res.error) throw res.error;
+        res.data.forEach(function(row){
+          var pin = rowToPin(row);
+          pins.push(pin);
+          addPinToMap(pin);
+        });
+        updatePinCount();
+      })
+      .catch(function(err){
+        console.error(err);
+        showToast('Couldn\'t load saved sounds');
+      });
+  }
+  loadPins();
 
   // ---------- map pins ----------
   function addPinToMap(pin){
