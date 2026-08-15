@@ -38,6 +38,20 @@
   .brand span{color:var(--amber);}
   .pin-count{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-dim);margin-top:2px;}
 
+  /* locate button */
+  .locate-btn{
+    position:absolute;right:16px;bottom:calc(96px + env(safe-area-inset-bottom));z-index:500;
+    width:46px;height:46px;border-radius:50%;border:1px solid var(--line);
+    background:var(--panel);color:var(--text);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 8px 20px rgba(0,0,0,.4);
+    transition:transform .15s ease,border-color .2s ease;
+  }
+  .locate-btn:active{transform:scale(.92);}
+  .locate-btn.locating svg{animation:spin 1s linear infinite;}
+  .locate-btn.located{border-color:var(--amber);color:var(--amber);}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
   /* hint pill */
   .hint{
     position:absolute;bottom:calc(28px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);
@@ -178,6 +192,16 @@
   <span>Tap anywhere on the map to drop a sound</span>
 </div>
 
+<button class="locate-btn" id="locateBtn" aria-label="Go to my location">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"></circle>
+    <line x1="12" y1="2" x2="12" y2="5"></line>
+    <line x1="12" y1="19" x2="12" y2="22"></line>
+    <line x1="2" y1="12" x2="5" y2="12"></line>
+    <line x1="19" y1="12" x2="22" y2="12"></line>
+  </svg>
+</button>
+
 <div class="toast" id="toast"></div>
 
 <div class="sheet-scrim" id="scrim"></div>
@@ -228,11 +252,43 @@
     maxZoom: 19
   }).addTo(map);
 
+  var meMarker = null;
+
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(function(pos){
       map.setView([pos.coords.latitude, pos.coords.longitude], 14);
     }, function(){ /* silent fallback to default view */ }, { timeout: 4000 });
   }
+
+  var locateBtn = document.getElementById('locateBtn');
+  locateBtn.addEventListener('click', function(){
+    if (!navigator.geolocation){
+      showToast('Location isn\'t available on this browser');
+      return;
+    }
+    locateBtn.classList.add('locating');
+    navigator.geolocation.getCurrentPosition(function(pos){
+      locateBtn.classList.remove('locating');
+      locateBtn.classList.add('located');
+      var latlng = [pos.coords.latitude, pos.coords.longitude];
+      map.setView(latlng, 16);
+
+      if (meMarker) map.removeLayer(meMarker);
+      meMarker = L.circleMarker(latlng, {
+        radius: 7,
+        color: '#3FBFAD',
+        weight: 2,
+        fillColor: '#3FBFAD',
+        fillOpacity: 0.5
+      }).addTo(map);
+
+      setTimeout(function(){ locateBtn.classList.remove('located'); }, 2000);
+    }, function(err){
+      locateBtn.classList.remove('locating');
+      if (err.code === 1) showToast('Location permission denied');
+      else showToast('Couldn\'t get your location');
+    }, { enableHighAccuracy: true, timeout: 8000 });
+  });
 
   map.on('click', function(e){
     if (sheet.classList.contains('open')) return;
