@@ -52,18 +52,21 @@
   .locate-btn.located{border-color:var(--amber);color:var(--amber);}
   @keyframes spin{to{transform:rotate(360deg);}}
 
-  /* hint pill */
+  /* drop-here button (pill) */
   .hint{
     position:absolute;bottom:calc(28px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);
     z-index:500;
     background:var(--panel);border:1px solid var(--line);border-radius:100px;
-    padding:11px 20px;font-size:13px;color:var(--text-dim);
-    display:flex;align-items:center;gap:8px;
+    padding:11px 20px;font-size:13px;color:var(--text-dim);font-family:'Inter',sans-serif;
+    display:flex;align-items:center;gap:8px;cursor:pointer;
     box-shadow:0 8px 24px rgba(0,0,0,.4);
-    transition:opacity .3s ease;
+    transition:opacity .3s ease,transform .15s ease;
   }
-  .hint-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex-shrink:0;}
+  .hint:active{transform:translateX(-50%) scale(.96);}
+  .hint-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex-shrink:0;transition:background .2s ease;}
   .hint.hidden{opacity:0;pointer-events:none;}
+  .hint.busy{pointer-events:none;opacity:.75;}
+  .hint.busy .hint-dot{background:var(--teal);}
 
   /* recording sheet */
   .sheet-scrim{
@@ -214,10 +217,10 @@
   </div>
 </div>
 
-<div class="hint" id="hint">
+<button class="hint" id="hint" type="button">
   <div class="hint-dot"></div>
-  <span>Tap anywhere on the map to drop a sound</span>
-</div>
+  <span id="hintLabel">Tap to drop a sound at your location</span>
+</button>
 
 <button class="locate-btn" id="locateBtn" aria-label="Go to my location">
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -315,6 +318,33 @@
 
   var meMarker = null;
 
+  // ---------- geolocation ----------
+  function getCurrentLatLng(onSuccess, onError){
+    if (!navigator.geolocation){
+      showToast('Location isn\'t available on this browser');
+      if (onError) onError();
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(function(pos){
+      onSuccess({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    }, function(err){
+      if (err.code === 1) showToast('Location permission denied');
+      else showToast('Couldn\'t get your location');
+      if (onError) onError();
+    }, { enableHighAccuracy: true, timeout: 8000 });
+  }
+
+  function showMeMarker(latlng){
+    if (meMarker) map.removeLayer(meMarker);
+    meMarker = L.circleMarker([latlng.lat, latlng.lng], {
+      radius: 7,
+      color: '#3FBFAD',
+      weight: 2,
+      fillColor: '#3FBFAD',
+      fillOpacity: 0.5
+    }).addTo(map);
+  }
+
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(function(pos){
       map.setView([pos.coords.latitude, pos.coords.longitude], 14);
@@ -323,41 +353,21 @@
 
   var locateBtn = document.getElementById('locateBtn');
   locateBtn.addEventListener('click', function(){
-    if (!navigator.geolocation){
-      showToast('Location isn\'t available on this browser');
-      return;
-    }
     locateBtn.classList.add('locating');
-    navigator.geolocation.getCurrentPosition(function(pos){
+    getCurrentLatLng(function(latlng){
       locateBtn.classList.remove('locating');
       locateBtn.classList.add('located');
-      var latlng = [pos.coords.latitude, pos.coords.longitude];
-      map.setView(latlng, 16);
-
-      if (meMarker) map.removeLayer(meMarker);
-      meMarker = L.circleMarker(latlng, {
-        radius: 7,
-        color: '#3FBFAD',
-        weight: 2,
-        fillColor: '#3FBFAD',
-        fillOpacity: 0.5
-      }).addTo(map);
-
+      map.setView([latlng.lat, latlng.lng], 16);
+      showMeMarker(latlng);
       setTimeout(function(){ locateBtn.classList.remove('located'); }, 2000);
-    }, function(err){
+    }, function(){
       locateBtn.classList.remove('locating');
-      if (err.code === 1) showToast('Location permission denied');
-      else showToast('Couldn\'t get your location');
-    }, { enableHighAccuracy: true, timeout: 8000 });
-  });
-
-  map.on('click', function(e){
-    if (sheet.classList.contains('open')) return;
-    openSheet(e.latlng);
+    });
   });
 
   // ---------- DOM refs ----------
   var hint = document.getElementById('hint');
+  var hintLabel = document.getElementById('hintLabel');
   var scrim = document.getElementById('scrim');
   var sheet = document.getElementById('sheet');
   var coordsEl = document.getElementById('coords');
@@ -404,9 +414,28 @@
     sheet.classList.remove('open');
     stopRecordingIfActive();
     resetRecordUI();
+    hint.classList.remove('hidden');
   }
 
   scrim.addEventListener('click', closeSheet);
+
+  hint.addEventListener('click', function(){
+    if (sheet.classList.contains('open') || hint.classList.contains('busy')) return;
+    hint.classList.add('busy');
+    var originalLabel = hintLabel.textContent;
+    hintLabel.textContent = 'Finding you…';
+    getCurrentLatLng(function(latlng){
+      hint.classList.remove('busy');
+      hintLabel.textContent = originalLabel;
+      map.setView([latlng.lat, latlng.lng], 16);
+      showMeMarker(latlng);
+      openSheet(latlng);
+    }, function(){
+      hint.classList.remove('busy');
+      hintLabel.textContent = originalLabel;
+    });
+  });
+
   cancelBtn.addEventListener('click', closeSheet);
 
   function resetRecordUI(){
