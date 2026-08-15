@@ -25,6 +25,7 @@
   .leaflet-control-attribution{background:rgba(10,11,13,.7)!important;color:var(--text-dim)!important;font-size:10px;}
   .leaflet-control-attribution a{color:var(--text-dim)!important;}
   .leaflet-control-zoom{display:none;}
+  .ny-mask{pointer-events:none;}
 
   /* top bar */
   .topbar{
@@ -334,6 +335,52 @@
     }
     return false;
   }
+
+  // Hatch out everywhere that isn't New York: one giant world-covering
+  // rectangle with the NY rings punched out as holes (even-odd fill),
+  // painted with a diagonal-line SVG pattern instead of a flat color.
+  (function drawOutOfStateMask(){
+    var WORLD_RING = [[-90,-360],[-90,360],[90,360],[90,-360]];
+    var maskRings = [WORLD_RING].concat(NY_BOUNDARY_RINGS.map(function(ring){
+      return ring.map(function(pt){ return [pt[1], pt[0]]; }); // [lng,lat] -> [lat,lng]
+    }));
+
+    var renderer = L.svg().addTo(map);
+    var svg = renderer._container;
+    var ns = 'http://www.w3.org/2000/svg';
+    var defs = document.createElementNS(ns, 'defs');
+    var pattern = document.createElementNS(ns, 'pattern');
+    pattern.setAttribute('id', 'nyOutOfStateHatch');
+    pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+    pattern.setAttribute('width', '8');
+    pattern.setAttribute('height', '8');
+    pattern.setAttribute('patternTransform', 'rotate(45)');
+    var bg = document.createElementNS(ns, 'rect');
+    bg.setAttribute('width', '8');
+    bg.setAttribute('height', '8');
+    bg.setAttribute('fill', '#0A0B0D');
+    bg.setAttribute('fill-opacity', '0.62');
+    var line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', '0'); line.setAttribute('y1', '0');
+    line.setAttribute('x2', '0'); line.setAttribute('y2', '8');
+    line.setAttribute('stroke', '#26282C');
+    line.setAttribute('stroke-width', '2');
+    pattern.appendChild(bg);
+    pattern.appendChild(line);
+    defs.appendChild(pattern);
+    svg.insertBefore(defs, svg.firstChild);
+
+    L.polygon(maskRings, {
+      renderer: renderer,
+      stroke: false,
+      fill: true,
+      fillColor: 'url(#nyOutOfStateHatch)',
+      fillOpacity: 1,
+      fillRule: 'evenodd',
+      interactive: false,
+      className: 'ny-mask'
+    }).addTo(map);
+  })();
 
   // ---------- geolocation ----------
   function getCurrentLatLng(onSuccess, onError){
